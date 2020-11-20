@@ -35,7 +35,7 @@ const (
 
 var (
 	logLevel    LogLevel
-	logFormat   string = "[{prefix}] {message}"
+	logFormat   string = "{prefix} {message}"
 	timeFormat  string = "15:24:05"
 	logFile     *os.File
 	printOutput bool
