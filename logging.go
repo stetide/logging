@@ -3,185 +3,302 @@ package logging
 import (
 	"fmt"
 	"io"
+	"os"
+	"path"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
-/*
-LOGGING FORMATTING
-	%(TIME) -> time
-	%(LEVEL) -> LogLevel Symbol
-	%(LEVELNAME) -> LogLevel Name
-	%(MSG) -> message
-*/
+type Level int
 
-type LogLevel int
+const (
+	DEBUG = iota
+	INFO
+	WARN
+	ERROR
+	FATAL
+)
 
-func (l LogLevel) valid() bool {
-	return l >= 0 && l <= 5
-}
-
-func (l LogLevel) String() string {
-	if !l.valid() {
+func (l Level) Symbol() string {
+	if l < DEBUG || l > FATAL {
 		return ""
 	}
-	return []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}[l]
-}
 
-func (l LogLevel) Symbol() string {
-	if !l.valid() {
-		return ""
-	}
 	return []string{"[+]", "[*]", "[~]", "[!]", "[x]"}[l]
 }
 
-func (l LogLevel) Name() string {
-	return l.String()
+func (l Level) Name() string {
+	if l < DEBUG || l > FATAL {
+		return ""
+	}
+
+	return []string{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"}[l]
 }
+
+func (l Level) Color() Color {
+	if l < DEBUG || l > FATAL {
+		return ColorWhite
+	}
+
+	return []Color{ColorCyan, ColorWhite, ColorYellow, ColorRed, ColorBrightRed}[l]
+}
+
+type Color string
 
 const (
-	DEBUG    LogLevel = iota // [+] additional debug information
-	INFO                     // [*] info for the user
-	WARNING                  // [~] unexpected behaviour that might cause problems
-	ERROR                    // [!] error but the program can still run
-	CRITICAL                 // [x] critical error -> program is terminated
+	ColorBlack   Color = "\u001b[30m"
+	ColorRed     Color = "\u001b[31m"
+	ColorGreen   Color = "\u001b[32m"
+	ColorYellow  Color = "\u001b[33m"
+	ColorBlue    Color = "\u001b[34m"
+	ColorMagenta Color = "\u001b[35m"
+	ColorCyan    Color = "\u001b[36m"
+	ColorWhite   Color = "\u001b[37m"
+
+	ColorBrightBlack   Color = "\u001b[90m"
+	ColorBrightRed     Color = "\u001b[91m"
+	ColorBrightGreen   Color = "\u001b[92m"
+	ColorBrightYellow  Color = "\u001b[93m"
+	ColorBrightBlue    Color = "\u001b[94m"
+	ColorBrightMagenta Color = "\u001b[95m"
+	ColorBrightCyan    Color = "\u001b[96m"
+	ColorBrightWhite   Color = "\u001b[97m"
+
+	ColorReset Color = "\u001b[0m"
 )
 
-// Standard Logger
-// contains unexported fields
-type Logger struct {
-	format     string
-	timeformat string
-	writer     io.Writer
-	level      LogLevel
-	nextLine   string
+func colorString(c Color, s string) string {
+	return string(c) + s + string(ColorReset)
 }
 
-// NewLogger returns a new Logger with format as default format.
-// The format could be eg. "%(TIME): %(MSG)" - %(TIME) will be replaced with the current time
-// and %(MSG) will be replaced with the message
-// writer if the writer is not nil, the message will not only be printed to the stdout but will
-// also be written to the writer (which could be a file)
-// level is the minimum level that the logger will log. If the level is set to INFO logger.Debug
-// will do nothing
-func NewLogger(format string, writer io.Writer, level LogLevel) *Logger {
-	return &Logger{
-		format,
-		"",
-		writer,
+type Formatter interface {
+	Format(lvl Level, msg string) string
+}
+
+// format
+// TIME: $t
+// LEVEL SYMBOL $l
+// LEVEL NAME: $L
+// FILE SHORT: $f
+// FILE LONG: $f
+// MESSAGE: $m
+type SimpleFormatter struct {
+	MsgFormat  string
+	TimeFormat string
+	LineEnd    string
+}
+
+func (f SimpleFormatter) Format(lvl Level, msg string) string {
+	str := f.MsgFormat + f.LineEnd
+	str = strings.ReplaceAll(str, "$t", time.Now().Format(f.TimeFormat))
+	str = strings.ReplaceAll(str, "$l", lvl.Symbol())
+	str = strings.ReplaceAll(str, "$L", lvl.Name())
+	str = strings.ReplaceAll(str, "$m", msg)
+
+	_, file, line, ok := runtime.Caller(3)
+	if !ok {
+		file = "???"
+		line = 0
+	}
+
+	str = strings.ReplaceAll(str, "$f", fmt.Sprintf("%s:%d", path.Base(file), line))
+	str = strings.ReplaceAll(str, "$F", fmt.Sprintf("%s:%d", file, line))
+
+	return str
+}
+
+type ColorFormatter struct {
+	SimpleFormatter
+	DefaultColor Color // TODO: implement
+}
+
+/*
+func (f ColorFormatter) Format(lvl Level, msg string) string {
+	str := f.MsgFormat + f.LineEnd
+	str = strings.ReplaceAll(str, "$t", colorString(time.Now().Format(f.TimeFormat), ColorGreen))
+	str = strings.ReplaceAll(str, "$l", colorString(lvl.Symbol(), lvl.Color()))
+	str = strings.ReplaceAll(str, "$L", colorString(lvl.Name(), lvl.Color()))
+	str = strings.ReplaceAll(str, "$m", colorString(msg, lvl.Color()))
+
+	_, file, line, ok := runtime.Caller(3)
+	if !ok {
+		file = "???"
+		line = 0
+	}
+
+	str = strings.ReplaceAll(str, "$f", colorString(fmt.Sprintf("%s:%d", path.Base(file), line), ColorBrightBlack))
+	str = strings.ReplaceAll(str, "$F", colorString(fmt.Sprintf("%s:%d", file, line), ColorBrightBlack))
+
+	return str
+}
+*/
+
+func (f ColorFormatter) color(c Color, s string) string {
+	return fmt.Sprintf("%s%s%s", c, s, f.DefaultColor)
+}
+
+func (f ColorFormatter) Format(lvl Level, msg string) string {
+	str := colorString(f.DefaultColor, f.MsgFormat+f.LineEnd)
+	str = strings.ReplaceAll(str, "$t", f.color(ColorGreen, time.Now().Format(f.TimeFormat)))
+	str = strings.ReplaceAll(str, "$l", f.color(lvl.Color(), lvl.Symbol()))
+	str = strings.ReplaceAll(str, "$L", f.color(lvl.Color(), lvl.Name()))
+	str = strings.ReplaceAll(str, "$m", f.color(lvl.Color(), msg))
+
+	_, file, line, ok := runtime.Caller(3)
+	if !ok {
+		file = "???"
+		line = 0
+	}
+
+	str = strings.ReplaceAll(str, "$f", f.color(ColorBrightBlack, fmt.Sprintf("%s:%d", path.Base(file), line)))
+	str = strings.ReplaceAll(str, "$F", f.color(ColorBrightBlack, fmt.Sprintf("%s:%d", file, line)))
+
+	return str
+}
+
+var DefaultFormatter = SimpleFormatter{
+	"$l [$t] :: $m",
+	"2006-01-02 15:04:05",
+	"\n",
+}
+
+type Logger interface {
+	Log(lvl Level, msg string)
+	Debug(msg string)
+	Debugf(msg string, a ...any)
+	Info(msg string)
+	Infof(msg string, a ...any)
+	Print(msg string)
+	Printf(msg string, a ...any)
+	Warn(msg string)
+	Warnf(msg string, a ...any)
+	Error(msg string)
+	Errorf(msg string, a ...any)
+	Fatal(msg string)
+	Fatalf(msg string, a ...any)
+}
+
+type SimpleLogger struct {
+	Lvl  Level
+	Form Formatter
+	Out  io.Writer
+	mu   sync.Mutex
+}
+
+func New(out io.Writer) *SimpleLogger {
+	return &SimpleLogger{
+		INFO,
+		DefaultFormatter,
+		out,
+		sync.Mutex{},
+	}
+}
+
+func NewSimpleLogger(level Level, formatter Formatter, out io.Writer) *SimpleLogger {
+	return &SimpleLogger{
 		level,
-		"\n",
+		formatter,
+		out,
+		sync.Mutex{},
 	}
 }
 
-// Sets the logging level of the Logger
-func (l *Logger) SetLevel(level LogLevel) {
-	if level.valid() {
-		l.level = level
-	}
-}
-
-func (l *Logger) SetWriter(writer io.Writer) {
-	l.writer = writer
-}
-
-// golangs time Layout eg: "2021-08-18 15:03"
-func (l *Logger) SetTimeFormat(layout string) {
-	l.timeformat = layout
-}
-
-func (l *Logger) SetFormat(format string) {
-	l.format = format
-}
-
-// SetNextLine is defaulted to a new line at the end of every log call.
-func (l *Logger) SetNextLine(endl string) {
-	l.nextLine = endl
-}
-
-// LOGGING FORMATTING
-// 	   %(TIME) -> time
-// 	   %(LEVEL) -> LogLevel Symbol
-// 	   %(LEVELNAME) -> LogLevel Name
-//     %(MSG) -> message
-func (l *Logger) log(lvl LogLevel, msg string) {
-	if lvl < l.level {
+func (l *SimpleLogger) Log(lvl Level, msg string) {
+	if lvl < l.Lvl {
 		return
 	}
 
-	m := l.format
-	m += l.nextLine
-	m = strings.ReplaceAll(m, "%(TIME)", time.Now().Format(l.timeformat))
-	m = strings.ReplaceAll(m, "%(LEVEL)", l.level.Symbol())
-	m = strings.ReplaceAll(m, "%(LEVELNAME)", l.level.Name())
-	m = strings.ReplaceAll(m, "%(MSG)", msg)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-	if l.writer != nil {
-		l.writer.Write([]byte(m))
+	fmt.Fprint(l.Out, l.Form.Format(lvl, msg))
+}
+
+func (l *SimpleLogger) Debug(msg string)            { l.Log(DEBUG, msg) }
+func (l *SimpleLogger) Debugf(msg string, a ...any) { l.Log(DEBUG, fmt.Sprintf(msg, a...)) }
+
+func (l *SimpleLogger) Info(msg string)            { l.Log(INFO, msg) }
+func (l *SimpleLogger) Infof(msg string, a ...any) { l.Log(INFO, fmt.Sprintf(msg, a...)) }
+
+func (l *SimpleLogger) Print(msg string)            { l.Log(INFO, msg) }
+func (l *SimpleLogger) Printf(msg string, a ...any) { l.Log(INFO, fmt.Sprintf(msg, a...)) }
+
+func (l *SimpleLogger) Warn(msg string)            { l.Log(WARN, msg) }
+func (l *SimpleLogger) Warnf(msg string, a ...any) { l.Log(WARN, fmt.Sprintf(msg, a...)) }
+
+func (l *SimpleLogger) Error(msg string)            { l.Log(ERROR, msg) }
+func (l *SimpleLogger) Errorf(msg string, a ...any) { l.Log(ERROR, fmt.Sprintf(msg, a...)) }
+
+func (l *SimpleLogger) Fatal(msg string)            { l.Log(FATAL, msg); os.Exit(1) }
+func (l *SimpleLogger) Fatalf(msg string, a ...any) { l.Log(FATAL, fmt.Sprintf(msg, a...)); os.Exit(1) }
+
+type MultiLogger struct {
+	Lvl     Level
+	Loggers []*SimpleLogger
+}
+
+func NewMultiLogger(level Level, loggers ...*SimpleLogger) *MultiLogger {
+	return &MultiLogger{
+		level,
+		loggers,
 	}
-	fmt.Print(m)
 }
 
-func (l *Logger) Log(level LogLevel, msg string) {
-	l.log(level, msg)
+func (m *MultiLogger) Log(lvl Level, msg string) {
+	if lvl < m.Lvl {
+		return
+	}
+
+	for _, l := range m.Loggers {
+		l.Log(lvl, msg)
+	}
 }
 
-func (l *Logger) Debug(msg string) {
-	l.log(DEBUG, msg)
+func (l *MultiLogger) Debug(msg string)            { l.Log(DEBUG, msg) }
+func (l *MultiLogger) Debugf(msg string, a ...any) { l.Log(DEBUG, fmt.Sprintf(msg, a...)) }
+
+func (l *MultiLogger) Info(msg string)            { l.Log(INFO, msg) }
+func (l *MultiLogger) Infof(msg string, a ...any) { l.Log(INFO, fmt.Sprintf(msg, a...)) }
+
+func (l *MultiLogger) Print(msg string)            { l.Log(INFO, msg) }
+func (l *MultiLogger) Printf(msg string, a ...any) { l.Log(INFO, fmt.Sprintf(msg, a...)) }
+
+func (l *MultiLogger) Warn(msg string)            { l.Log(WARN, msg) }
+func (l *MultiLogger) Warnf(msg string, a ...any) { l.Log(WARN, fmt.Sprintf(msg, a...)) }
+
+func (l *MultiLogger) Error(msg string)            { l.Log(ERROR, msg) }
+func (l *MultiLogger) Errorf(msg string, a ...any) { l.Log(ERROR, fmt.Sprintf(msg, a...)) }
+
+func (l *MultiLogger) Fatal(msg string)            { l.Log(FATAL, msg); os.Exit(1) }
+func (l *MultiLogger) Fatalf(msg string, a ...any) { l.Log(FATAL, fmt.Sprintf(msg, a...)); os.Exit(1) }
+
+var DefaultLogger = &SimpleLogger{
+	INFO,
+	DefaultFormatter,
+	os.Stdout,
+	sync.Mutex{},
 }
 
-func (l *Logger) Info(msg string) {
-	l.log(INFO, msg)
-}
+func SetFormatter(format Formatter) { DefaultLogger.Form = format }
+func SetLevel(level Level)          { DefaultLogger.Lvl = level }
+func SetOutput(out io.Writer)       { DefaultLogger.Out = out }
 
-func (l *Logger) Warning(msg string) {
-	l.log(WARNING, msg)
-}
+func Debug(msg string)            { DefaultLogger.Log(DEBUG, msg) }
+func Debugf(msg string, a ...any) { DefaultLogger.Log(DEBUG, fmt.Sprintf(msg, a...)) }
 
-func (l *Logger) Error(msg string) {
-	l.log(ERROR, msg)
-}
+func Info(msg string)            { DefaultLogger.Log(INFO, msg) }
+func Infof(msg string, a ...any) { DefaultLogger.Log(INFO, fmt.Sprintf(msg, a...)) }
 
-func (l *Logger) Critical(msg string) {
-	l.log(CRITICAL, msg)
-}
+func Print(msg string)            { DefaultLogger.Log(INFO, msg) }
+func Printf(msg string, a ...any) { DefaultLogger.Log(INFO, fmt.Sprintf(msg, a...)) }
 
-var defaultLogger = &Logger{
-	format:     "%(LEVEL) %(TIME): %(MSG)",
-	timeformat: "2021-08-18 15:06:12",
-	writer:     nil,
-	level:      DEBUG,
-	nextLine:   "\n",
-}
+func Warn(msg string)            { DefaultLogger.Log(WARN, msg) }
+func Warnf(msg string, a ...any) { DefaultLogger.Log(WARN, fmt.Sprintf(msg, a...)) }
 
-func SetLevel(level LogLevel) {
-	defaultLogger.SetLevel(level)
-}
+func Error(msg string)            { DefaultLogger.Log(ERROR, msg) }
+func Errorf(msg string, a ...any) { DefaultLogger.Log(ERROR, fmt.Sprintf(msg, a...)) }
 
-func SetWriter(writer io.Writer) {
-	defaultLogger.SetWriter(writer)
-}
-
-func Log(level LogLevel, msg string) {
-	defaultLogger.Log(level, msg)
-}
-
-func Debug(msg string) {
-	defaultLogger.Debug(msg)
-}
-
-func Info(msg string) {
-	defaultLogger.Info(msg)
-}
-
-func Warning(msg string) {
-	defaultLogger.Warning(msg)
-}
-
-func Error(msg string) {
-	defaultLogger.Error(msg)
-}
-
-func Critical(msg string) {
-	defaultLogger.Critical(msg)
-}
+func Fatal(msg string)            { DefaultLogger.Log(FATAL, msg); os.Exit(1) }
+func Fatalf(msg string, a ...any) { DefaultLogger.Log(FATAL, fmt.Sprintf(msg, a...)); os.Exit(1) }
