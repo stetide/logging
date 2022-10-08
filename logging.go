@@ -14,7 +14,7 @@ import (
 type Level int
 
 const (
-	DEBUG = iota
+	DEBUG Level = iota
 	INFO
 	WARN
 	ERROR
@@ -82,7 +82,7 @@ type Formatter interface {
 // LEVEL SYMBOL $l
 // LEVEL NAME: $L
 // FILE SHORT: $f
-// FILE LONG: $f
+// FILE LONG: $F
 // MESSAGE: $m
 type SimpleFormatter struct {
 	MsgFormat  string
@@ -113,27 +113,6 @@ type ColorFormatter struct {
 	SimpleFormatter
 	DefaultColor Color // TODO: implement
 }
-
-/*
-func (f ColorFormatter) Format(lvl Level, msg string) string {
-	str := f.MsgFormat + f.LineEnd
-	str = strings.ReplaceAll(str, "$t", colorString(time.Now().Format(f.TimeFormat), ColorGreen))
-	str = strings.ReplaceAll(str, "$l", colorString(lvl.Symbol(), lvl.Color()))
-	str = strings.ReplaceAll(str, "$L", colorString(lvl.Name(), lvl.Color()))
-	str = strings.ReplaceAll(str, "$m", colorString(msg, lvl.Color()))
-
-	_, file, line, ok := runtime.Caller(3)
-	if !ok {
-		file = "???"
-		line = 0
-	}
-
-	str = strings.ReplaceAll(str, "$f", colorString(fmt.Sprintf("%s:%d", path.Base(file), line), ColorBrightBlack))
-	str = strings.ReplaceAll(str, "$F", colorString(fmt.Sprintf("%s:%d", file, line), ColorBrightBlack))
-
-	return str
-}
-*/
 
 func (f ColorFormatter) color(c Color, s string) string {
 	return fmt.Sprintf("%s%s%s", c, s, f.DefaultColor)
@@ -236,10 +215,10 @@ func (l *SimpleLogger) Fatalf(msg string, a ...any) { l.Log(FATAL, fmt.Sprintf(m
 
 type MultiLogger struct {
 	Lvl     Level
-	Loggers []*SimpleLogger
+	Loggers []Logger
 }
 
-func NewMultiLogger(level Level, loggers ...*SimpleLogger) *MultiLogger {
+func NewMultiLogger(level Level, loggers ...Logger) *MultiLogger {
 	return &MultiLogger{
 		level,
 		loggers,
