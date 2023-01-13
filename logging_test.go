@@ -1,18 +1,17 @@
-package logging_test
+package logging
 
 import (
 	"bytes"
-	"cloud/pkg/logging"
 	"testing"
 )
 
 func TestDefaultLogger(t *testing.T) {
 	buf := new(bytes.Buffer)
 
-	logger := logging.NewSimpleLogger(logging.DEBUG, logging.SimpleFormatter{
-		"$l [$L] :: $m",
-		"",
-		"",
+	logger := NewSimpleLogger(DEBUG, SimpleFormatter{
+		MsgFormat:  "$l [$L] :: $m",
+		TimeFormat: "",
+		LineEnd:    "",
 	}, buf)
 	logger.Info("hallo")
 
